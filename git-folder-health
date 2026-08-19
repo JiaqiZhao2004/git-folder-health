@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Continuously summarize the health of direct child repositories.
+
+set -u
+
+interval=30
+
+usage() {
+  printf 'Usage: %s FOLDER\n' "${0##*/}" >&2
+  printf 'Checks every direct subfolder of FOLDER every %s seconds.\n' "$interval" >&2
+}
+
+if [[ $# -ne 1 || $1 == '-h' || $1 == '--help' ]]; then
+  usage
+  if [[ $# -eq 1 ]]; then
+    exit 0
+  fi
+  exit 2
+fi
+
+root=$1
+if [[ ! -d $root ]]; then
+  printf 'Error: not a directory: %s\n' "$root" >&2
+  exit 2
+fi
+
+if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
+  clean_style=$'\033[1;30;42m'
+  unclean_style=$'\033[1;37;41m'
+  reset_style=$'\033[0m'
+else
+  clean_style=''
+  unclean_style=''
+  reset_style=''
+fi
+
+render() {
+  local total=0 healthy=0 child ahead behind
+
+  while IFS= read -r -d '' child; do
+    ((total += 1))
+
+    if ! git -C "$child" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      continue
+    fi
+
+    # A repository must have a configured upstream and be able to refresh it.
+    if ! git -C "$child" rev-parse --verify '@{upstream}' >/dev/null 2>&1 ||
+       ! git -C "$child" fetch --quiet --no-tags 2>/dev/null; then
+      continue
+    fi
+
+    # Include untracked files: they are part of an unclean working tree.
+    if [[ -n $(git -C "$child" status --porcelain --untracked-files=normal 2>/dev/null) ]]; then
+      continue
+    fi
+
+    read -r ahead behind < <(git -C "$child" rev-list --left-right --count 'HEAD...@{upstream}' 2>/dev/null) || continue
+    if [[ $ahead == 0 && $behind == 0 ]]; then
+      ((healthy += 1))
+    fi
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print0)
+
+  if (( healthy == total )); then
+    printf '\r\033[2K%s  CLEAN  %s %d/%d repositories healthy  %s' \
+      "$clean_style" "$reset_style" "$healthy" "$total" "$reset_style"
+  else
+    printf '\r\033[2K%s  UNCLEAN  %s %d/%d repositories healthy  %s' \
+      "$unclean_style" "$reset_style" "$healthy" "$total" "$reset_style"
+  fi
+}
+
+trap 'printf "\033[0m"; exit 0' INT TERM
+
+while :; do
+  render
+  sleep "$interval"
+done

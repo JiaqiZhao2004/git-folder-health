@@ -3,11 +3,13 @@
 
 set -u
 
-interval=30
+check_interval=30
+rotation_interval=5
+rotation_index=0
 
 usage() {
   printf 'Usage: %s FOLDER\n' "${0##*/}" >&2
-  printf 'Checks every direct subfolder of FOLDER every %s seconds.\n' "$interval" >&2
+  printf 'Checks every direct subfolder of FOLDER every %s seconds.\n' "$check_interval" >&2
 }
 
 if [[ $# -ne 1 || $1 == '-h' || $1 == '--help' ]]; then
@@ -34,45 +36,76 @@ else
   reset_style=''
 fi
 
-render() {
-  local total=0 healthy=0 child ahead behind
+total=0
+healthy=0
+unhealthy=()
+
+check_repositories() {
+  local child ahead behind
+
+  total=0
+  healthy=0
+  unhealthy=()
+  rotation_index=0
 
   while IFS= read -r -d '' child; do
     ((total += 1))
 
     if ! git -C "$child" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      unhealthy+=("$(basename "$child")")
       continue
     fi
 
     # A repository must have a configured upstream and be able to refresh it.
     if ! git -C "$child" rev-parse --verify '@{upstream}' >/dev/null 2>&1 ||
        ! git -C "$child" fetch --quiet --no-tags 2>/dev/null; then
+      unhealthy+=("$(basename "$child")")
       continue
     fi
 
     # Include untracked files: they are part of an unclean working tree.
     if [[ -n $(git -C "$child" status --porcelain --untracked-files=normal 2>/dev/null) ]]; then
+      unhealthy+=("$(basename "$child")")
       continue
     fi
 
-    read -r ahead behind < <(git -C "$child" rev-list --left-right --count 'HEAD...@{upstream}' 2>/dev/null) || continue
+    if ! read -r ahead behind < <(git -C "$child" rev-list --left-right --count 'HEAD...@{upstream}' 2>/dev/null); then
+      unhealthy+=("$(basename "$child")")
+      continue
+    fi
     if [[ $ahead == 0 && $behind == 0 ]]; then
       ((healthy += 1))
+    else
+      unhealthy+=("$(basename "$child")")
     fi
   done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print0)
+
+}
+
+render() {
+  local detail
 
   if (( healthy == total )); then
     printf '\r\033[2K%s  CLEAN  %s %d/%d repositories healthy  %s' \
       "$clean_style" "$reset_style" "$healthy" "$total" "$reset_style"
   else
-    printf '\r\033[2K%s  UNCLEAN  %s %d/%d repositories healthy  %s' \
-      "$unclean_style" "$reset_style" "$healthy" "$total" "$reset_style"
+    if (( rotation_index % (${#unhealthy[@]} + 1) == 0 )); then
+      detail="$healthy/$total repositories healthy"
+    else
+      detail=${unhealthy[rotation_index % (${#unhealthy[@]} + 1) - 1]}
+    fi
+    ((rotation_index += 1))
+    printf '\r\033[2K%s  UNCLEAN  %s %s  %s' \
+      "$unclean_style" "$reset_style" "$detail" "$reset_style"
   fi
 }
 
 trap 'printf "\033[0m"; exit 0' INT TERM
 
 while :; do
-  render
-  sleep "$interval"
+  check_repositories
+  for (( elapsed=0; elapsed<check_interval; elapsed+=rotation_interval )); do
+    render
+    sleep "$rotation_interval"
+  done
 done

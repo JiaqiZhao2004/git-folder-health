@@ -23,7 +23,7 @@ Press `Ctrl-C` to stop it. Set `NO_COLOR=1` to turn off the terminal color treat
 
 When one or more repositories are unhealthy, the text after `UNCLEAN` rotates every 5 seconds: first the aggregate health count, then each unhealthy repository name, and then the count again. Repository health is still checked only every 30 seconds.
 
-The tool intentionally considers only immediate child directories, making it suitable for a folder that directly contains your checked-out projects.
+The tool intentionally considers only immediate child directories, skipping hidden folders whose names start with `.`, making it suitable for a folder that directly contains your checked-out projects.
 
 ## Install (optional)
 

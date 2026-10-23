@@ -78,7 +78,7 @@ check_repositories() {
     else
       unhealthy+=("$(basename "$child")")
     fi
-  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print0)
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -print0)
 
 }
 
